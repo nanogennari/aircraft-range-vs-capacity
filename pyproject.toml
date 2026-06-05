@@ -1,0 +1,16 @@
+[project]
+name = "aircraft-range-vs-capacity"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "lxml>=4.9",
+    "pandas>=2.0",
+    "plotly>=5.18",
+    "dash>=2.14",
+]
+
+[project.scripts]
+scrape = "scrape:main"
+app = "app:main"
