@@ -75,9 +75,11 @@ def parse_capacity(text: str) -> int | None:
     t = clean(text).replace(",", "")
 
     # Leading total with per-class breakdown in parens: "305 (24F/54J/227Y)"
-    # The number before "(" is the grand total; the parenthetical is a per-cabin
-    # breakdown and must not be used as the total.
-    m_lead = re.match(r"(\d{2,4})\s*\(", t)
+    # Leading total followed by per-cabin breakdown, e.g.:
+    #   "305 (24F/54J/227Y)"  — paren style
+    #   "298: 16F + 56J + 226Y or 323: 34J + 289Y"  — colon style (MD-11)
+    # In both cases the number before the separator is the grand total.
+    m_lead = re.match(r"(\d{2,4})\s*[:(]", t)
     if m_lead:
         n = int(m_lead.group(1))
         if 10 <= n <= 900:
@@ -213,17 +215,21 @@ def _family_prefix_from_url(url: str) -> str:
 
 
 def _cap_priority(label: str, wide: bool) -> int:
-    """Priority for a capacity table row.
-    Wide-body:  2-class (3) > generic (2) > 3-class (1)
-    Narrow-body: 1-class (3) > generic (2) > 2-class (1) > 3-class (0)
+    """Priority for a capacity table row. Higher wins; -1 = nothing set yet.
+    Wide-body:  2-class (4) > generic (3) > 3-class (2) > max/exit limit (0)
+    Narrow-body: 1-class (4) > generic (3) > 2-class (2) > 3-class (1) > max/exit limit (0)
+    "Maximum seating" / "exit limit" is used only as a last resort (priority 0):
+    it beats the sentinel -1 (nothing set) but loses to any real seating label.
     """
+    if "maximum" in label or "max." in label or "exit limit" in label:
+        return 0
     has2 = "2-class" in label or "2 class" in label
     has3 = "3-class" in label or "3 class" in label
     has1 = "1-class" in label or "1 class" in label
     if wide:
-        return 3 if has2 else (1 if has3 else 2)
+        return 4 if has2 else (2 if has3 else 3)
     else:
-        return 3 if has1 else (0 if has3 else (1 if has2 else 2))
+        return 4 if has1 else (1 if has3 else (2 if has2 else 3))
 
 
 # ── Infobox parser ────────────────────────────────────────────────────────────
@@ -242,7 +248,7 @@ def parse_infobox(table) -> dict:
 def fields_to_record(fields: dict, name: str, url: str) -> dict:
     rec = dict(name=name, manufacturer=None, first_flight=None,
                range_km=None, capacity=None, url=url)
-    cap_priority = 0
+    cap_priority = -1   # -1 = nothing set; 0 = max-seating last resort; >0 = real label
     wide = _is_wide_body(name, url)
 
     for label, value in fields.items():
@@ -342,7 +348,7 @@ def parse_table_variants_as_columns(table, manufacturer, first_flight, url) -> l
         "range_km": None, "capacity": None, "url": url,
     } for v in variants]
     # Priority for capacity source: 3=2-class (preferred), 2=generic, 1=3-class, 0=unset
-    cap_priority = [0] * len(records)
+    cap_priority = [-1] * len(records)   # -1 = nothing set; 0 = max-seating last resort
 
     for row in rows[header_row_idx + 1:]:
         cells = row.find_all(["th", "td"])
@@ -570,6 +576,30 @@ def scrape_page(url: str, title: str) -> list[dict]:
     return []
 
 
+# ── Name fixups ───────────────────────────────────────────────────────────────
+# Map ICAO engine-variant suffixed names to the common marketing designations.
+_NAME_FIXUPS: dict[str, str] = {
+    # A330neo: ICAO engine-variant suffix → common marketing name
+    "A330-841": "A330-800neo",
+    "A330-941": "A330-900neo",
+    # A380: all delivered aircraft are the -800 variant; engine suffix not meaningful
+    "A380-841": "A380-800",
+    "A380-842": "A380-800",
+    "A380-861": "A380-800",
+    # Convair 880 model numbers (22 = model 22, the base -880 designation)
+    "22":  "Convair 880-22",
+    "22M": "Convair 880-22M",
+}
+
+# First-flight year overrides for variants that inherit the wrong year from the
+# original-variant infobox on a shared Wikipedia page.
+_FIRST_FLIGHT_FIXUPS: dict[str, int] = {
+    "A321neo": 2016,
+    "A321LR":  2018,
+    "A321XLR": 2023,
+    "777-200LR": 2005,
+}
+
 # ── Freighter exclusion list ──────────────────────────────────────────────────
 # Variant names (exact, case-sensitive, post-citation-strip) that are pure
 # freighters or cargo transports. Caught by pattern below where possible;
@@ -749,6 +779,17 @@ def _post_process(data: list[dict]) -> list[dict]:
             prefix = _family_prefix_from_url(rec.get("url", ""))
             name = prefix + name
 
+        # Strip freighter co-designation suffixes before fixup lookups so that
+        # "777-200LR/777F" → "777-200LR" matches _FIRST_FLIGHT_FIXUPS correctly.
+        name = re.sub(r"\s*/\s*\d*[A-Z]*[Ff]\b", "", name).strip()
+
+        # Apply marketing-name fixups (e.g. ICAO engine-suffix codes → common names)
+        name = _NAME_FIXUPS.get(name, name)
+
+        # Override first_flight for variants that inherit wrong year from shared infobox
+        if name in _FIRST_FLIGHT_FIXUPS:
+            rec["first_flight"] = _FIRST_FLIGHT_FIXUPS[name]
+
         rec["name"] = name
 
         # Fix manufacturer: re-normalize in case it wasn't caught before
@@ -779,11 +820,6 @@ def _post_process(data: list[dict]) -> list[dict]:
         # header (e.g. A340 overview table: "1991 [46]" → "1991" after citation strip)
         if re.fullmatch(r"\d{4}", name):
             continue
-
-        # Strip freighter co-designation suffixes from combined passenger/freight entries:
-        # "777-200LR/777F" → "777-200LR",  "767-300ER/F" → "767-300ER"
-        name = re.sub(r"\s*/\s*\d*[A-Z]*[Ff]\b", "", name).strip()
-        rec["name"] = name
 
         # Drop freighter-only variants:
         #   - in the explicit exclusion set
