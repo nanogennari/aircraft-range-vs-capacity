@@ -130,8 +130,23 @@ const COLOR_MAP = {palette_json};
 const YEAR_MIN = {year_min};
 const YEAR_MAX = {year_max};
 
-// ── Manufacturer multi-select (Tom Select) ────────────────────────────────────
+// ── Layout (must be defined before any event handler fires) ──────────────────
 const manufacturers = [...new Set(AIRCRAFT.map(d => d.manufacturer))].sort();
+const layout = {{
+  xaxis: {{ title: 'Range (km)', tickformat: ',', gridcolor: '#eee', showgrid: true, zeroline: false }},
+  yaxis: {{ title: 'Typical passenger capacity', gridcolor: '#eee', showgrid: true, zeroline: false }},
+  plot_bgcolor: 'white', paper_bgcolor: 'white',
+  hovermode: 'closest',
+  legend: {{
+    title: {{ text: 'Manufacturer<br><sup>◆ wide-body · ● narrow-body</sup>', font: {{ size: 12 }} }},
+    yanchor: 'top', y: 0.99, xanchor: 'left', x: 1.01,
+    bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#ddd', borderwidth: 1,
+  }},
+  margin: {{ l: 60, r: 200, t: 20, b: 60 }},
+}};
+Plotly.newPlot('chart', [], layout, {{ responsive: true }});
+
+// ── Manufacturer multi-select (Tom Select) ────────────────────────────────────
 const sel = document.getElementById('mfr-select');
 manufacturers.forEach(m => {{
   const o = document.createElement('option');
@@ -158,22 +173,6 @@ noUiSlider.create(sliderEl, {{
   ],
 }});
 sliderEl.noUiSlider.on('update', updateChart);
-
-// ── Layout ────────────────────────────────────────────────────────────────────
-const layout = {{
-  xaxis: {{ title: 'Range (km)', tickformat: ',', gridcolor: '#eee', showgrid: true, zeroline: false }},
-  yaxis: {{ title: 'Typical passenger capacity', gridcolor: '#eee', showgrid: true, zeroline: false }},
-  plot_bgcolor: 'white', paper_bgcolor: 'white',
-  hovermode: 'closest',
-  legend: {{
-    title: {{ text: 'Manufacturer<br><sup>◆ wide-body · ● narrow-body</sup>', font: {{ size: 12 }} }},
-    yanchor: 'top', y: 0.99, xanchor: 'left', x: 1.01,
-    bgcolor: 'rgba(255,255,255,0.85)', bordercolor: '#ddd', borderwidth: 1,
-  }},
-  margin: {{ l: 60, r: 200, t: 20, b: 60 }},
-}};
-
-Plotly.newPlot('chart', [], layout, {{ responsive: true }});
 
 // ── Filter + render ───────────────────────────────────────────────────────────
 function updateChart() {{
